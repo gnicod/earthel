@@ -43,7 +43,8 @@ impl HgtFile {
         if let Some(parent) = self.path.parent() {
             fs::create_dir_all(parent)?;
         }
-        let tmp_path = PathBuf::from("/tmp/tmp_hgt.hgt.gz");
+        // TODO change
+        let tmp_path = PathBuf::from(format!("/tmp/tmp_{}.gz", self.name));
         let mut file = std::fs::File::create(tmp_path)?;
         let mut content =  Cursor::new(response.bytes().await?);
         std::io::copy(&mut content, &mut file)?;
@@ -54,11 +55,13 @@ impl HgtFile {
     }
 
     fn extract_gz_file(&self) -> std::io::Result<()> {
-        let input_path = PathBuf::from("/tmp/tmp_hgt.hgt.gz");
-        let gz_file = File::open(input_path)?;
+        let input_path = PathBuf::from(format!("/tmp/tmp_{}.gz", self.name));
+        let gz_file = File::open(&input_path)?;
         let mut decoder = GzDecoder::new(gz_file);
         let mut output_file = File::create(&self.path)?;
         std::io::copy(&mut decoder, &mut output_file)?;
+        fs::remove_file(input_path)?;
+
         Ok(())
     }
 
