@@ -1,0 +1,11 @@
+[package]
+name = "earthel"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+reqwest = { version = "0.12"}
+tokio = { version = "1", features = ["full"] }
+flate2 = { version = "1.0.17", features = ["zlib-ng"], default-features = false }
+byteorder = "1.4"
+
