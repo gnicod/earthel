@@ -94,8 +94,6 @@ type Result<PathBuf> = std::result::Result<PathBuf, Box<dyn std::error::Error + 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fmt::Display;
-
 
     #[tokio::test]
     async fn it_works() {
