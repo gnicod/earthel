@@ -13,21 +13,19 @@ struct HgtFile {
     path: PathBuf,
 }
 
-
 impl HgtFile {
-    async fn new(latitude : f64, longitude: f64) -> Self {
+    async fn new(latitude: f64, longitude: f64) -> Self {
         let lat_prefix = if latitude >= 0.0 { "N" } else { "S" };
         let lon_prefix = if longitude >= 0.0 { "E" } else { "W" };
         let lat_int = latitude.abs().floor() as i32;
         let lon_int = longitude.abs().floor() as i32;
-        let name = format!("{}{:02}{}{:03}.hgt", lat_prefix, lat_int, lon_prefix, lon_int);
+        let name = format!(
+            "{}{:02}{}{:03}.hgt",
+            lat_prefix, lat_int, lon_prefix, lon_int
+        );
         let folder = format!("{}{}", lat_prefix, lat_int);
-        let path = PathBuf::from(format!("/tmp/hgt/{}/{}",folder, name));
-        Self{
-            folder,
-            name,
-            path,
-        }
+        let path = PathBuf::from(format!("/tmp/hgt/{}/{}", folder, name));
+        Self { folder, name, path }
     }
 
     async fn get_file(&self) -> std::io::Result<File> {
@@ -38,15 +36,20 @@ impl HgtFile {
     }
 
     async fn download_hgt(&self) -> Result<()> {
-        let path_s3 = format!("https://elevation-tiles-prod.s3.amazonaws.com/skadi/{}/{}.gz", self.folder, self.name);
-        let response = reqwest::get(path_s3).await?;
+        let path_s3 = format!(
+            "https://elevation-tiles-prod.s3.amazonaws.com/skadi/{}/{}.gz",
+            self.folder, self.name
+        );
+        let response = reqwest::get(path_s3)
+            .await
+            .map_err(|e| format!("Failed to download hgt file from {}: {}", path_s3, e))?;
         if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)?;
+            fs::create_dir_all(parent)
+                .map_err(|e| format!("Failed to create directory {}: {}", parent, e))?;
         }
-        // TODO change
         let tmp_path = PathBuf::from(format!("/tmp/tmp_{}.gz", self.name));
         let mut file = std::fs::File::create(tmp_path)?;
-        let mut content =  Cursor::new(response.bytes().await?);
+        let mut content = Cursor::new(response.bytes().await?);
         std::io::copy(&mut content, &mut file)?;
 
         self.extract_gz_file().expect("TODO: panic message");
@@ -75,11 +78,40 @@ impl HgtFile {
     }
 }
 
-
 impl EarthEl {
-    pub async fn get_elevation(latitude: f64, longitude : f64) -> Result<i16>{
+    // Generate doc string
+    /// Retrieves the elevation data for the given latitude and longitude coordinates.
+    ///
+    /// This function downloads the necessary HGT file if it is not already available locally,
+    /// extracts the elevation data from the file, and returns the elevation in meters.
+    ///
+    /// # Arguments
+    ///
+    /// * `latitude` - A f64 representing the latitude of the location.
+    /// * `longitude` - A f64 representing the longitude of the location.
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the elevation in meters as an i16, or an error if the operation fails.
+    ///
+    /// # Example
+    ///
+    /// ```
+    /// use earth_el::EarthEl;
+    ///
+    /// #[tokio::main]
+    /// async fn main() {
+    ///     let latitude = 47.0592;
+    ///     let longitude = 5.7181;
+    ///     match EarthEl::get_elevation(latitude, longitude).await {
+    ///         Ok(elevation) => println!("Elevation: {} meters", elevation),
+    ///         Err(e) => eprintln!("Error: {}", e),
+    ///     }
+    /// }
+    /// ```
+    pub async fn get_elevation(latitude: f64, longitude: f64) -> Result<i16> {
         let hgt_file = HgtFile::new(latitude, longitude).await;
-        let mut file= hgt_file.get_file().await.expect("file not found");
+        let mut file = hgt_file.get_file().await.expect("file not found");
         let grid_size: usize = hgt_file.get_resolution().expect("failed to get resolution");
         let lat_seconds = ((latitude - latitude.floor()) * 3600.0) as usize;
         let lon_seconds = ((longitude - longitude.floor()) * 3600.0) as usize;
@@ -100,10 +132,14 @@ mod tests {
 
     #[tokio::test]
     async fn it_works() {
-        let el = EarthEl::get_elevation(47.0592,5.7181).await.expect("error");
-        assert_eq!( el, 259 );
-        let el = EarthEl::get_elevation(45.833641, 6.864594).await.expect("error");
-        assert_eq!( el, 4740 );
+        let el = EarthEl::get_elevation(47.0592, 5.7181)
+            .await
+            .expect("error");
+        assert_eq!(el, 259);
+        let el = EarthEl::get_elevation(45.833641, 6.864594)
+            .await
+            .expect("error");
+        assert_eq!(el, 4740);
         print!("Mont blanc {el}")
     }
 }
