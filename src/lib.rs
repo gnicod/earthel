@@ -4,8 +4,24 @@ use std::fs;
 use std::fs::File;
 use std::io::{Cursor, Seek, SeekFrom};
 use std::path::PathBuf;
+use thiserror::Error;
 
 pub struct EarthEl;
+
+#[derive(Debug, Error)]
+pub enum HgtError {
+    #[error("File operation failed: {0}")]
+    IoError(#[from] std::io::Error),
+
+    #[error("Failed to decode gzip file: {0}")]
+    DecodeError(#[from] flate2::DecompressError),
+
+    #[error("Network error: {0}")]
+    ReqwestError(#[from] reqwest::Error),
+
+    #[error("Unexpected HGT resolution: {0}")]
+    InvalidResolution(u64),
+}
 
 struct HgtFile {
     folder: String,
@@ -28,11 +44,11 @@ impl HgtFile {
         Self { folder, name, path }
     }
 
-    async fn get_file(&self) -> std::io::Result<File> {
+    async fn get_file(&self) -> std::result::Result<File, HgtError> {
         if !self.path.exists() {
-            self.download_hgt().await.expect("Error downloading file");
+            self.download_hgt().await?;
         }
-        File::open(&self.path)
+        File::open(&self.path).map_err(HgtError::from)
     }
 
     async fn download_hgt(&self) -> Result<()> {
@@ -40,20 +56,15 @@ impl HgtFile {
             "https://elevation-tiles-prod.s3.amazonaws.com/skadi/{}/{}.gz",
             self.folder, self.name
         );
-        let response = reqwest::get(path_s3)
-            .await
-            .map_err(|e| format!("Failed to download hgt file from {}: {}", path_s3, e))?;
+        let response = reqwest::get(&path_s3).await?;
         if let Some(parent) = self.path.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|e| format!("Failed to create directory {}: {}", parent, e))?;
+            fs::create_dir_all(parent).map_err(HgtError::from)?;
         }
         let tmp_path = PathBuf::from(format!("/tmp/tmp_{}.gz", self.name));
-        let mut file = std::fs::File::create(tmp_path)?;
+        let mut file = File::create(tmp_path)?;
         let mut content = Cursor::new(response.bytes().await?);
         std::io::copy(&mut content, &mut file)?;
-
-        self.extract_gz_file().expect("TODO: panic message");
-
+        self.extract_gz_file()?;
         Ok(())
     }
 
@@ -64,7 +75,6 @@ impl HgtFile {
         let mut output_file = File::create(&self.path)?;
         std::io::copy(&mut decoder, &mut output_file)?;
         fs::remove_file(input_path)?;
-
         Ok(())
     }
 
@@ -72,7 +82,7 @@ impl HgtFile {
         let from_metadata = |m: fs::Metadata| match m.len() {
             25934402 => Some(3601), // SRTM1
             2884802 => Some(1201),  // SRTM3
-            _ => Some(3601),        // Default to SRTM3
+            _ => None,              // Default to SRTM3
         };
         fs::metadata(&self.path).ok().and_then(from_metadata)
     }
@@ -111,8 +121,10 @@ impl EarthEl {
     /// ```
     pub async fn get_elevation(latitude: f64, longitude: f64) -> Result<i16> {
         let hgt_file = HgtFile::new(latitude, longitude).await;
-        let mut file = hgt_file.get_file().await.expect("file not found");
-        let grid_size: usize = hgt_file.get_resolution().expect("failed to get resolution");
+        let mut file = hgt_file.get_file().await?;
+        let grid_size: usize = hgt_file
+            .get_resolution()
+            .ok_or_else(|| HgtError::InvalidResolution(0))?;
         let lat_seconds = ((latitude - latitude.floor()) * 3600.0) as usize;
         let lon_seconds = ((longitude - longitude.floor()) * 3600.0) as usize;
         let lat_pos = (grid_size - 1) - (lat_seconds * (grid_size - 1) / 3600);
@@ -124,7 +136,7 @@ impl EarthEl {
     }
 }
 
-type Result<PathBuf> = std::result::Result<PathBuf, Box<dyn std::error::Error + Send + Sync>>;
+type Result<T> = std::result::Result<T, HgtError>;
 
 #[cfg(test)]
 mod tests {
